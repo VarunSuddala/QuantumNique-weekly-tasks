@@ -12,8 +12,7 @@ group by d.dept_name ;
 
 ## 3. Employees Above Department Average
 # -- Find employees earning more than their own department average without hard-coding departments.
-```
-sql
+```sql
 select emp_id , emp_name from Employees e join (select avg(salary) as average_salary ,dept_id from Employees group by dept_id) as x 
 on e.dept_id = x.dept_id
 where  e.salary > x.average_salary ;
