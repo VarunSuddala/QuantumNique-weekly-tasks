@@ -1,64 +1,60 @@
-# Major APIs — Online Coding Assessment Platform
+### `POST /auth/login`
 
-This document describes the key RESTful APIs for the platform. Only the essential APIs used by students and admins are listed here.
+Request:
 
----
-
-## 1. Student / User Authentication
-
-### `POST /api/v1/auth/login`
-- **Purpose**: Authenticates a student or admin and returns a JWT token.
-- **Request**:
 ```json
 {
   "email": "student@college.edu",
-  "password": "mySecurePassword123"
+  "password": "password123"
 }
 ```
-- **Response** (`200 OK`):
+
+Response: `200 OK`
+
 ```json
 {
-  "status": "success",
-  "token": "eyJhbGciOiJIUzI1NiIsIn...",
+  "token": "jwt-token",
   "user": {
-    "user_id": "u-101",
+    "id": "u-101",
     "name": "Varun",
     "role": "STUDENT"
   }
 }
 ```
 
----
+## Student APIs
 
-## 2. Assessment APIs (Student Facing)
+### Join an assessment
 
-### `POST /api/v1/assessments/{assessment_id}/join`
-- **Purpose**: Allows an authenticated student to enter a scheduled assessment.
-- **Request Headers**: `Authorization: Bearer <token>`
-- **Request**: Empty body or optional passkey:
+`POST /assessments/{assessment_id}/join`
+
+Optional body:
+
 ```json
 {
   "passkey": "CAMPUS2024"
 }
 ```
-- **Response** (`200 OK`):
+
+Response: `200 OK`
+
 ```json
 {
   "assessment_id": "asm-501",
-  "title": "Data Structures Placement Test",
-  "start_time": "2024-10-04T10:00:00Z",
-  "end_time": "2024-10-04T12:00:00Z",
-  "duration_minutes": 120,
-  "status": "IN_PROGRESS"
+  "title": "Data Structures Test",
+  "status": "IN_PROGRESS",
+  "duration_minutes": 120
 }
 ```
 
----
+### Get questions
 
-### `GET /api/v1/assessments/{assessment_id}/questions`
-- **Purpose**: Fetches the list of questions for an ongoing test. Only public/sample test cases are returned (hidden test cases are strictly omitted).
-- **Request Headers**: `Authorization: Bearer <token>`
-- **Response** (`200 OK`):
+`GET /assessments/{assessment_id}/questions`
+
+Returns question details and sample test cases. Hidden test cases are not returned.
+
+Response: `200 OK`
+
 ```json
 {
   "assessment_id": "asm-501",
@@ -67,145 +63,119 @@ This document describes the key RESTful APIs for the platform. Only the essentia
       "question_id": "q-1",
       "title": "Longest Subarray with Sum K",
       "description": "Given an array of integers...",
-      "difficulty": "MEDIUM",
       "points": 50,
-      "time_limit_ms": 2000,
-      "memory_limit_mb": 256,
-      "sample_test_cases": [
-        {
-          "input": "[10, 5, 2, 7, 1, 9]\n15",
-          "expected_output": "4"
-        }
-      ]
+      "sample_test_cases": []
     }
   ]
 }
 ```
 
----
+### Submit code
 
-## 3. Code Submission & Execution APIs
+`POST /submissions`
 
-### `POST /api/v1/submissions`
-- **Purpose**: Submits candidate code for evaluation. The service puts the job onto the message queue and immediately returns `QUEUED`.
-- **Request Headers**: `Authorization: Bearer <token>`
-- **Request**:
+Request:
+
 ```json
 {
   "assessment_id": "asm-501",
   "question_id": "q-1",
   "language": "PYTHON",
-  "code": "def longest_subarray_sum_k(nums, k):\n    ..."
+  "code": "def solve(nums, k): ..."
 }
 ```
-- **Response** (`202 Accepted`):
+
+Response: `202 Accepted`
+
 ```json
 {
   "submission_id": "sub-9001",
-  "status": "QUEUED",
-  "message": "Submission received and queued for execution.",
-  "submitted_at": "2024-10-04T10:15:30Z"
+  "status": "QUEUED"
 }
 ```
 
----
+### Get submission result
 
-### `GET /api/v1/submissions/{submission_id}`
-- **Purpose**: Polled by client or fetched over WebSocket to get evaluation verdict and execution details once complete.
-- **Request Headers**: `Authorization: Bearer <token>`
-- **Response** (`200 OK`):
+`GET /submissions/{submission_id}`
+
+Response: `200 OK`
+
 ```json
 {
   "submission_id": "sub-9001",
   "status": "COMPLETED",
   "verdict": "ACCEPTED",
-  "passed_tests": 10,
-  "total_tests": 10,
   "score": 50,
-  "runtime_ms": 142,
-  "memory_used_kb": 18400,
-  "test_details": [
-    {
-      "test_case_num": 1,
-      "status": "PASSED",
-      "is_sample": true
-    },
-    {
-      "test_case_num": 2,
-      "status": "PASSED",
-      "is_sample": false
-    }
-  ]
+  "passed_tests": 10,
+  "total_tests": 10
 }
 ```
 
----
+Submission statuses: `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`.
 
-## 4. Admin Management APIs
+## Admin APIs
 
-### `POST /api/v1/admin/assessments`
-- **Purpose**: Allows recruiters or college faculty to create a new assessment.
-- **Request Headers**: `Authorization: Bearer <admin-token>`
-- **Request**:
+### Create an assessment
+
+`POST /admin/assessments`
+
+Request:
+
 ```json
 {
   "title": "Semester 5 Coding Assessment",
   "description": "Mid-term coding evaluation",
-  "start_time": "2024-10-15T09:00:00Z",
-  "end_time": "2024-10-15T11:00:00Z",
+  "start_time": "2026-10-15T09:00:00Z",
+  "end_time": "2026-10-15T11:00:00Z",
   "duration_minutes": 120
 }
 ```
-- **Response** (`201 Created`):
+
+Response: `201 Created`
+
 ```json
 {
   "assessment_id": "asm-777",
-  "status": "CREATED",
-  "title": "Semester 5 Coding Assessment"
+  "status": "CREATED"
 }
 ```
 
----
+### Add a question
 
-### `POST /api/v1/admin/assessments/{assessment_id}/questions`
-- **Purpose**: Adds a problem statement, constraints, sample test cases, and hidden test cases to an assessment.
-- **Request Headers**: `Authorization: Bearer <admin-token>`
-- **Request**:
+`POST /admin/assessments/{assessment_id}/questions`
+
+Request:
+
 ```json
 {
   "title": "Merge Overlapping Intervals",
   "description": "Given an array of intervals...",
   "points": 50,
-  "time_limit_ms": 1500,
-  "memory_limit_mb": 256,
   "test_cases": [
     {
-      "input": "[[1,3],[2,6],[8,10]]",
-      "expected_output": "[[1,6],[8,10]]",
+      "input": "[[1,3],[2,6]]",
+      "expected_output": "[[1,6]]",
       "is_hidden": false
-    },
-    {
-      "input": "[[1,4],[4,5]]",
-      "expected_output": "[[1,5]]",
-      "is_hidden": true
     }
   ]
 }
 ```
-- **Response** (`201 Created`):
+
+Response: `201 Created`
+
 ```json
 {
   "question_id": "q-102",
-  "message": "Question and test cases added successfully."
+  "status": "CREATED"
 }
 ```
 
----
+### View results
 
-### `GET /api/v1/admin/assessments/{assessment_id}/results`
-- **Purpose**: Admin dashboard endpoint to review all candidate scores and submissions.
-- **Request Headers**: `Authorization: Bearer <admin-token>`
-- **Response** (`200 OK`):
+`GET /admin/assessments/{assessment_id}/results`
+
+Response: `200 OK`
+
 ```json
 {
   "assessment_id": "asm-501",
@@ -214,10 +184,17 @@ This document describes the key RESTful APIs for the platform. Only the essentia
     {
       "user_id": "u-101",
       "student_name": "Varun",
-      "total_score": 100,
-      "questions_solved": 2,
-      "last_submission_time": "2024-10-04T10:45:10Z"
+      "total_score": 100
     }
   ]
 }
 ```
+
+## Common status codes 
+`200` -  Success 
+`201` -  Created 
+`202` -  Accepted for processing 
+`400` -  Invalid request 
+`401` -  Not authenticated 
+`403` -  Not authorized 
+`404` -  Not found |

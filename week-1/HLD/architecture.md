@@ -141,7 +141,7 @@ The data model connects users, tests, questions, test cases, and evaluation resu
 
 ---
 
-## 8. Database Choice: Why PostgreSQL?
+## 8. Database Choice: PostgreSQL
 
 I chose PostgreSQL as the primary database for the following reasons:
 
@@ -310,37 +310,3 @@ I designed safe execution around these principles:
   - `api_http_5xx_rate`: Server error rates.
 - **Grafana Dashboards**: Give college coordinators and system admins live visibility into test activity.
 - **Alerts**: If `queue_size > 500` for more than 2 minutes, alerts fire via Slack / PagerDuty to scale worker capacity immediately.
-
----
-
-## 24. Five Key Design Trade-Offs
-
-### Trade-off 1: Relational Database (PostgreSQL) vs NoSQL (MongoDB)
-- **Option A**: NoSQL (MongoDB) for flexible schema.
-- **Option B**: Relational Database (PostgreSQL) with structured tables and foreign keys.
-- **Selected Option**: Option B (PostgreSQL).
-- **Why**: The data has clear relational integrity: assessments link to questions, questions link to test cases, and users link to submissions and results. Foreign keys prevent invalid submissions. The total data volume (under 1 GB per test) does not require the massive horizontal sharding of NoSQL.
-
-### Trade-off 2: Synchronous Execution vs Asynchronous Message Queue
-- **Option A**: Synchronous execution (keep the student HTTP connection open until code compiles and runs).
-- **Option B**: Asynchronous execution using a Message Queue (RabbitMQ) with polling or WebSockets.
-- **Selected Option**: Option B (Asynchronous Execution).
-- **Why**: Running code takes several seconds. Keeping HTTP requests open ties up server threads and crashes the server under burst loads. An asynchronous queue absorbs spikes and allows workers to evaluate submissions steadily.
-
-### Trade-off 3: Redis In-Memory Cache vs Direct Database Access
-- **Option A**: Query PostgreSQL directly every time a student reads a question or checks test info.
-- **Option B**: Cache questions and active test data in Redis with a 10-minute TTL.
-- **Selected Option**: Option B (Redis Cache).
-- **Why**: In a test with 10,000 students, all students read the exact same 4 questions. Caching these questions in Redis prevents 40,000+ identical read queries from reaching PostgreSQL, keeping database CPU low.
-
-### Trade-off 4: Docker Containers vs VM per Submission
-- **Option A**: Boot a complete lightweight Virtual Machine (like AWS Firecracker microVM) for each submission.
-- **Option B**: Use lightweight Linux containers (Docker with gVisor / cgroups) from a pre-warmed pool.
-- **Selected Option**: Option B (Container Worker Pool).
-- **Why**: Full virtual machines consume more memory and take longer to start. A pre-warmed container starts in milliseconds and consumes minimal RAM while providing enough isolation (no network, restricted CPU, restricted memory, read-only disk) for student coding tests.
-
-### Trade-off 5: HTTP Polling vs WebSockets for Submission Status
-- **Option A**: Persistent WebSocket connection for every online student.
-- **Option B**: Short-interval HTTP polling (client polls every 2 seconds for up to 30 seconds after submitting).
-- **Selected Option**: Option B (Short-interval HTTP Polling, with WebSocket as an optional progressive enhancement).
-- **Why**: Maintaining 10,000 persistent open WebSocket connections across unstable campus Wi-Fi networks requires complex connection state management and reconnect logic. HTTP polling for 5 to 10 seconds after a submission is simple, stateless, works cleanly through campus firewalls, and can be easily cached or rate-limited.
