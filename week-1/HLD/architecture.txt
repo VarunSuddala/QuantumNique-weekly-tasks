@@ -1,0 +1,342 @@
+HIGH-LEVEL DESIGN (HLD): ONLINE CODING ASSESSMENT PLATFORM
+
+================================================================================
+1. FUNCTIONAL REQUIREMENTS
+================================================================================
+
+Student Capabilities:
+- Students can log in and join scheduled assessments using their student credentials.
+- Students can view questions, problem statements, constraints, and public sample test cases.
+- Students can write and submit source code in supported languages (Python, Java, C++).
+- Students can view the status of their code submission (Queued, Running, Completed) and see the verdict (Accepted, Wrong Answer, Time Limit Exceeded, etc.).
+- Students can see their submission history and total marks scored during or after the test.
+
+Admin Capabilities (Colleges & Recruiters):
+- Admins can create assessments with specific start times, end times, and duration limits.
+- Admins can create and edit questions, configure memory and time limits, and attach public and hidden test cases.
+- Admins can review student results, download grade reports, and view leaderboards.
+
+
+================================================================================
+2. NON-FUNCTIONAL REQUIREMENTS
+================================================================================
+
+- Reliability & Consistency: Student submissions must never be lost, even if an execution worker crashes.
+- Fairness & Safe Execution: Untrusted student code must run in an isolated environment without network access or file system tampering.
+- Low Latency for Reads: Loading questions and dashboard data should take under 200 ms.
+- Predictable Execution Times: A submission should be evaluated within 5 to 15 seconds during normal peak load.
+- Scalability: The system should support up to 10,000 concurrent students taking an exam simultaneously without crashing.
+- Integrity: Hidden test cases and expected answers must never leak to the client browser.
+
+
+================================================================================
+3. ASSUMPTIONS
+================================================================================
+
+- An assessment lasts typically 90 to 120 minutes.
+- Most submissions happen in bursts: when a test starts, when students finish the first question, and during the final 15 minutes of the test.
+- The average code file size submitted by a student is between 2 KB and 10 KB.
+- Each question has around 2 to 3 sample test cases and 10 to 20 hidden test cases.
+
+
+================================================================================
+4. SCALE ESTIMATES (SIMPLE CALCULATIONS)
+================================================================================
+
+Assumptions:
+- 10,000 students taking a test simultaneously.
+- 4 coding questions per test.
+- On average, a student submits code 5 times per question (small fixes/tests).
+
+Calculations:
+- Total submissions per student = 4 questions * 5 submissions = 20 submissions.
+- Total submissions in a 2-hour exam = 10,000 students * 20 = 200,000 submissions.
+- Average submission rate = 200,000 / 7,200 seconds = ~28 submissions per second.
+- Peak submission rate (last 15 minutes or burst periods, roughly 5x average) = ~140 submissions per second.
+- Read requests (students viewing questions and status once every 10 seconds) = 10,000 / 10 = 1,000 QPS.
+- Storage requirement:
+  200,000 submissions * 5 KB average code size = ~1 GB of raw code files.
+  Database rows for 200,000 submissions = under 500 MB.
+  This is easily handled by standard database servers and cloud storage.
+
+
+================================================================================
+5. POTENTIAL BOTTLENECKS
+================================================================================
+
+1. Code Execution Workers:
+   Compiling and running code takes CPU and memory. If 140 submissions arrive every second and each takes 2 seconds to run, workers must be pooled and scaled so the queue does not lag.
+
+2. Database Write Pressure:
+   If all students submit at the exact same time, writing directly to the database without a queue could exhaust database connections.
+
+3. Hidden Test Cases Disk I/O:
+   Reading large test files repeatedly from disk or database for every submission will slow down the judge.
+
+
+================================================================================
+6. SERVICE RESPONSIBILITIES
+================================================================================
+
+1. Client:
+   Web frontend where students write code in an editor, view questions, and check submission status. Also includes an admin portal for teachers to create tests and check scores.
+
+2. Load Balancer / API Gateway:
+   Distributes traffic across service instances, terminates SSL, and applies rate limits.
+
+3. Authentication Service:
+   Manages user login and verifies JWT tokens for Students and Admins.
+
+4. Assessment Service:
+   Manages test schedules, durations, eligibility, and rules.
+
+5. Question Service:
+   Stores problem statements, constraints, and public sample test cases. Hidden test cases are kept separate.
+
+6. Submission Service:
+   Receives code submissions, creates an initial record in PostgreSQL with status QUEUED, and pushes the job to the message queue.
+
+7. Judge / Execution Service:
+   Pulls jobs from the message queue, dispatches code to isolated worker containers, and enforces time and memory limits.
+
+8. Result Service:
+   Compares program output with expected output, computes points, updates the database, and sets the final verdict.
+
+9. Database (PostgreSQL):
+   Stores relational data: users, tests, questions, submissions, and scores.
+
+10. Cache (Redis):
+    Caches questions, user sessions, and rate-limiting counters.
+
+11. Message Queue (RabbitMQ / Kafka):
+    Buffers incoming submissions so bursts do not crash workers.
+
+12. Object Storage (S3 / MinIO):
+    Stores large test case input and output files and raw code files.
+
+13. Monitoring (Prometheus & Grafana):
+    Tracks queue backlog, worker CPU/memory usage, and error rates.
+
+
+================================================================================
+7. HIGH-LEVEL DATA MODEL
+================================================================================
+
+1. Users:
+   user_id (PK), full_name, email, password_hash, role (STUDENT / ADMIN), created_at.
+
+2. Assessments:
+   assessment_id (PK), title, description, start_time, end_time, duration_minutes, created_by (FK -> Users).
+
+3. Questions:
+   question_id (PK), assessment_id (FK -> Assessments), title, description, time_limit_ms, memory_limit_mb, points.
+
+4. TestCases:
+   test_case_id (PK), question_id (FK -> Questions), input_data, expected_output, is_hidden (boolean), weight_points.
+
+5. Submissions:
+   submission_id (PK), user_id (FK -> Users), assessment_id (FK -> Assessments), question_id (FK -> Questions), language, code_content, status, submitted_at.
+
+6. Results:
+   result_id (PK), submission_id (FK -> Submissions), verdict, passed_tests, total_tests, score_awarded, runtime_ms, memory_used_kb, evaluated_at.
+
+
+================================================================================
+8. DATABASE CHOICE: WHY POSTGRESQL?
+================================================================================
+
+I chose PostgreSQL because:
+- The data has clear relational connections: assessments have questions, questions have test cases, and submissions produce results.
+- Foreign keys prevent orphan records (such as submissions for non-existent questions).
+- ACID transactions guarantee that scores and submissions are never recorded halfway or lost.
+- The data size for a 10,000 student exam is under 1 GB, which is very easy for PostgreSQL to handle without complex NoSQL sharding.
+- It supports JSONB columns if we need to store custom test case outputs or compiler logs.
+
+
+================================================================================
+9. CACHE STRATEGY
+================================================================================
+
+I used Redis for:
+1. Active Questions:
+   During an exam, all 10,000 students read the exact same 4 questions. Caching these questions in Redis prevents 40,000+ repetitive read queries from hitting PostgreSQL.
+2. User Sessions & Tokens:
+   Validating JWTs and permissions in memory takes less than 1 millisecond.
+3. Rate Limiting:
+   Tracking student submission counts with short TTL keys.
+
+
+================================================================================
+10. MESSAGE QUEUE STRATEGY
+================================================================================
+
+I used a message queue (like RabbitMQ) because running code takes several seconds:
+- If the API kept the connection open while compiling and running code, server threads would run out and requests would fail.
+- Flow:
+  1. Student hits Submit.
+  2. Submission Service writes status QUEUED and pushes message to RabbitMQ.
+  3. API responds immediately with HTTP 202 Accepted.
+  4. Workers pull jobs from the queue and evaluate them steadily.
+  5. Spikes in traffic simply wait in the queue instead of crashing the system.
+
+
+================================================================================
+11. SAFE CODE EXECUTION (SANDBOX DESIGN)
+================================================================================
+
+To safely execute untrusted student code:
+1. Isolated Containers:
+   Each submission runs in a container with gVisor or Linux namespaces/cgroups.
+2. No Network Access:
+   Network is turned off (--net=none) so code cannot call external servers or attack the database.
+3. Resource Limits:
+   - CPU Time: Execution timer kills any process exceeding the limit (e.g. 2.0 seconds) with TIME_LIMIT_EXCEEDED.
+   - Memory Limit: Cgroups enforce memory caps (e.g. 256 MB), killing programs that exceed it with MEMORY_LIMIT_EXCEEDED.
+   - Process Limit: Max 10 processes to block fork bombs.
+4. Read-Only Disk:
+   Root filesystem is read-only. Code reads stdin and writes stdout.
+5. Disposable Sandbox:
+   Container state is wiped clean after each run.
+
+
+================================================================================
+12. WORKER POOLS AND WORKER MANAGEMENT
+================================================================================
+
+Starting a fresh container from scratch can take a second. To keep things fast, the Judge Service maintains a pre-warmed worker pool with idle sandboxes for Python, C++, and Java ready in memory. When a job arrives, an idle worker is assigned immediately, executes the code, and gets recycled.
+
+
+================================================================================
+13. HORIZONTAL SCALING
+================================================================================
+
+- API and Submission Services are stateless, so more instances can be added behind the load balancer.
+- Execution worker nodes scale out automatically based on the length of the message queue.
+- PostgreSQL uses a primary node for writes and read replicas for dashboards and leaderboards.
+
+
+================================================================================
+14. CONCURRENT SUBMISSIONS HANDLING
+================================================================================
+
+When many students submit at the exact same moment:
+- Web workers handle incoming requests concurrently.
+- Each submission gets a unique UUID and is pushed to RabbitMQ.
+- Students receive an immediate confirmation and poll for the result every 2 seconds.
+
+
+================================================================================
+15. RETRIES AND DEAD LETTER QUEUE
+================================================================================
+
+- If a worker crashes while running a submission, the message is not acknowledged and RabbitMQ re-assigns it to another worker.
+- If a submission fails 3 times due to system crashes, it is moved to a Dead Letter Queue (DLQ) and the student is shown a system error message.
+
+
+================================================================================
+16. IDEMPOTENCY
+================================================================================
+
+If a student double-clicks "Submit" because of slow internet, the client sends a hash of (user_id + question_id + code). If the same hash arrives within 5 seconds, the service returns the existing submission_id instead of running it twice.
+
+
+================================================================================
+17. RATE LIMITING
+================================================================================
+
+To avoid spamming:
+- Max 1 code submission per student every 10 seconds.
+- Max 1 status check per student every 2 seconds.
+- Exceeding the limit returns HTTP 429 ("Please wait before submitting again").
+
+
+================================================================================
+18. HIGH AVAILABILITY
+================================================================================
+
+- Load balancers run in active-passive pairs.
+- Microservices run across multiple availability zones.
+- PostgreSQL has a standby replica ready for failover.
+- Redis runs with Sentinel for automatic master failover.
+
+
+================================================================================
+19. FAILURE RECOVERY
+================================================================================
+
+- If a worker node crashes, jobs are safe in the queue and get re-processed.
+- If the student's browser tab closes, code drafts are auto-saved in local browser storage every 15 seconds.
+
+
+================================================================================
+20. HIDDEN-TEST PROTECTION
+================================================================================
+
+- The student API endpoint only returns public sample test cases (where is_hidden = false).
+- Hidden test cases are stored securely in Object Storage and fetched only by the backend Judge Service.
+- The result API only tells the student whether a hidden test passed or failed, never the input or expected output.
+
+
+================================================================================
+21. SECURITY
+================================================================================
+
+- JWT tokens with short expiration times for authentication.
+- Input validation to block SQL injection and XSS.
+- Worker containers have no network access to internal databases.
+- Admin endpoints strictly verify the ADMIN role.
+
+
+================================================================================
+22. HIGH-LEVEL PLAGIARISM CONTROLS
+================================================================================
+
+After the assessment ends:
+1. Tokenize code into keywords and operators, ignoring variable names and whitespace.
+2. Use fingerprinting (winnowing algorithm) to generate hashes for code blocks.
+3. Compare candidate submissions for high similarity (> 80%) and flag them for teacher review.
+4. Check timestamps to detect students pasting large blocks of code in under 30 seconds.
+
+
+================================================================================
+23. MONITORING & ALERTING
+================================================================================
+
+- Prometheus tracks queue length, worker CPU usage, API latency, and 5xx errors.
+- Grafana dashboards display real-time test progress.
+- Alerts trigger if the submission queue backlog stays high for more than 2 minutes.
+
+
+================================================================================
+24. FIVE KEY DESIGN TRADE-OFFS
+================================================================================
+
+Trade-off 1: Relational Database (PostgreSQL) vs NoSQL (MongoDB)
+- Option A: NoSQL (MongoDB) for flexible schema.
+- Option B: Relational Database (PostgreSQL) with structured tables and foreign keys.
+- Selected Option: Option B (PostgreSQL).
+- Why: The data has clear relationships between exams, questions, submissions, and scores. Foreign keys prevent orphan records, and the total data size is well under 1 GB per test.
+
+Trade-off 2: Synchronous Execution vs Asynchronous Message Queue
+- Option A: Synchronous execution (keep the connection open until code compiles and runs).
+- Option B: Asynchronous execution using a Message Queue (RabbitMQ) with status polling.
+- Selected Option: Option B (Asynchronous Execution).
+- Why: Running code takes a few seconds. Synchronous requests would lock web server threads and crash under peak load. A queue buffers spikes smoothly.
+
+Trade-off 3: Redis Cache vs Direct Database Access
+- Option A: Query PostgreSQL directly every time a student opens a question.
+- Option B: Cache active test questions in Redis.
+- Selected Option: Option B (Redis Cache).
+- Why: 10,000 students read the exact same 4 questions. Caching avoids tens of thousands of identical queries hitting the database.
+
+Trade-off 4: Container Worker Pool vs Full Virtual Machines
+- Option A: Boot a full virtual machine for every submission.
+- Option B: Use pre-warmed lightweight containers (Docker with gVisor).
+- Selected Option: Option B (Container Worker Pool).
+- Why: Full VMs take too long to boot. Pre-warmed containers launch in milliseconds and provide strong isolation without network access.
+
+Trade-off 5: HTTP Polling vs Persistent WebSockets for Status
+- Option A: Persistent WebSocket connection for every online student.
+- Option B: Short-interval HTTP polling (every 2 seconds after submitting).
+- Selected Option: Option B (Short-interval HTTP Polling).
+- Why: Keeping 10,000 WebSockets open across unstable campus Wi-Fi networks causes frequent disconnects and reconnection overhead. HTTP polling is simple, stateless, and firewall-friendly.

@@ -1,0 +1,73 @@
+erDiagram
+    USERS ||--o{ SUBMISSIONS : submits
+    USERS ||--o{ RESULTS : earns
+    ASSESSMENTS ||--o{ QUESTIONS : contains
+    ASSESSMENTS ||--o{ SUBMISSIONS : tracks
+    ASSESSMENTS ||--o{ RESULTS : produces
+    QUESTIONS ||--o{ TEST_CASES : has
+    QUESTIONS ||--o{ SUBMISSIONS : evaluated_by
+
+    USERS {
+        uuid user_id PK
+        string full_name
+        string email
+        string password_hash
+        string role "STUDENT or ADMIN"
+        timestamp created_at
+    }
+
+    ASSESSMENTS {
+        uuid assessment_id PK
+        string title
+        text description
+        timestamp start_time
+        timestamp end_time
+        int duration_minutes
+        int total_marks
+        uuid created_by FK
+    }
+
+    QUESTIONS {
+        uuid question_id PK
+        uuid assessment_id FK
+        string title
+        text description
+        string difficulty "EASY, MEDIUM, HARD"
+        int points
+        int time_limit_ms
+        int memory_limit_mb
+    }
+
+    TEST_CASES {
+        uuid test_case_id PK
+        uuid question_id FK
+        text input_data
+        text expected_output
+        boolean is_hidden "true for hidden judge tests"
+        int weight_points
+    }
+
+    SUBMISSIONS {
+        uuid submission_id PK
+        uuid user_id FK
+        uuid assessment_id FK
+        uuid question_id FK
+        string language "PYTHON, JAVA, CPP"
+        text code_content
+        string status "QUEUED, RUNNING, COMPLETED, FAILED"
+        timestamp submitted_at
+    }
+
+    RESULTS {
+        uuid result_id PK
+        uuid submission_id FK
+        uuid user_id FK
+        uuid assessment_id FK
+        string verdict "ACCEPTED, WRONG_ANSWER, TLE, MLE, COMPILATION_ERROR"
+        int passed_tests
+        int total_tests
+        int score_awarded
+        int runtime_ms
+        int memory_used_kb
+        timestamp evaluated_at
+    }

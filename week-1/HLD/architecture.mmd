@@ -1,0 +1,78 @@
+graph TD
+    %% Clients
+    subgraph Clients["Clients"]
+        StudentClient["Student Web App (React / Browser)"]
+        AdminClient["Admin Dashboard (College / Recruiter)"]
+    end
+
+    %% Gateway & Ingress
+    LB["Load Balancer / API Gateway (Nginx / Envoy)"]
+
+    %% Core Services
+    subgraph Services["Core Microservices"]
+        AuthService["Authentication Service (JWT & Sessions)"]
+        AssessmentService["Assessment Service (Tests & Enrollment)"]
+        QuestionService["Question Service (Problems & Samples)"]
+        SubmissionService["Submission Service (Ingestion & Rate Limit)"]
+        ResultService["Result Service (Scores & Leaderboard)"]
+    end
+
+    %% Async Execution Pipeline
+    subgraph AsyncPipeline["Asynchronous Code Execution"]
+        MsgQueue["Message Queue (RabbitMQ / Kafka)"]
+        JudgeService["Judge / Execution Service (Worker Manager)"]
+        subgraph WorkerPool["Isolated Sandbox Workers"]
+            Worker1["Worker 1 (Docker / gVisor)"]
+            Worker2["Worker 2 (Docker / gVisor)"]
+            Worker3["Worker N (Docker / gVisor)"]
+        end
+    end
+
+    %% Data & Storage Layer
+    subgraph StorageLayer["Data & Storage Layer"]
+        Cache["Cache (Redis: Sessions, Active Questions, Rate Limits)"]
+        MainDB[("Relational Database (PostgreSQL)")]
+        ObjectStore[("Object Storage (S3 / MinIO: Code files, Large test cases)")]
+    end
+
+    %% Monitoring
+    subgraph Observability["Monitoring & Alerts"]
+        Monitoring["Prometheus & Grafana (Queue lag, Worker CPU, API latency)"]
+    end
+
+    %% Connections
+    StudentClient --> LB
+    AdminClient --> LB
+
+    LB --> AuthService
+    LB --> AssessmentService
+    LB --> QuestionService
+    LB --> SubmissionService
+    LB --> ResultService
+
+    AuthService --> Cache
+    AuthService --> MainDB
+
+    AssessmentService --> Cache
+    AssessmentService --> MainDB
+
+    QuestionService --> Cache
+    QuestionService --> MainDB
+    QuestionService --> ObjectStore
+
+    SubmissionService --> Cache
+    SubmissionService --> MainDB
+    SubmissionService --> MsgQueue
+
+    MsgQueue --> JudgeService
+    JudgeService --> WorkerPool
+
+    WorkerPool --> ObjectStore
+    JudgeService --> ResultService
+    ResultService --> MainDB
+    ResultService --> Cache
+
+    %% Monitoring links
+    Services -.-> Monitoring
+    AsyncPipeline -.-> Monitoring
+    StorageLayer -.-> Monitoring
